@@ -1,0 +1,329 @@
+\documentclass[10pt]{article}
+\usepackage[utf8]{inputenc}
+\usepackage{geometry}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{hyperref}
+\usepackage{bookmark}
+\usepackage{amsmath}
+\usepackage{enumitem}
+\usepackage{float}
+\usepackage{subcaption}
+
+\geometry{a4paper, margin=0.95in}
+
+\title{Data Analysis Project Report}
+\author{
+    Team: I love data analysis\\ 
+    Andreas Heindl
+}
+
+\date{\today}
+
+\begin{document}
+
+\maketitle
+
+\section{Contributions}
+Solo project; all data engineering, analysis, modeling, and reporting completed by Andreas Heindl.
+
+\section{Dataset Description}
+\begin{itemize}[leftmargin=*]
+    \item \textbf{Dataset source:} ``Solar Power Generation Data'' (Ani Kannal, Kaggle).
+    \item \textbf{Suitability for time-series analysis:} Inverter data plus co-recorded weather sensors with multiple features and enough data points.
+    \item \textbf{Time span and sampling:} 15~May~2020 00:00 17~Jun~2020 23:45 with a sampling interval of 15 minutes.
+    \item \textbf{Key variables:} AC Power, DC Power, Total Yield, Daily Yield, Irradiation, Ambient Temperature, Module Temperature, Source Key, Plant ID\@.
+    \item \textbf{Size and structure:} The generation table has $68\,778$ rows with 7 columns and the weather table has $3\,182$ rows with 6 columns.
+    \item \textbf{Missing data summary:} Nearly no NANs were counted; some irradiation readings were interpolated while other segments stay missing for longer periods.
+    \item \textbf{Known caveats:} DC Power needed a $\times0.1$ scaling factor; inverter logs rotate through the day; weather data comes from one mast and was (imperfectly) assumed to represent every inverter.
+\end{itemize}
+
+\section{Data Preprocessing and Data Quality}
+\subsection{Basic statistical analysis using pandas}
+
+\begin{table}[!htbp]
+\centering
+\caption{Generation data grouped statistics and quantiles}
+\begin{tabular}{lccccccc}
+\toprule
+Metric (unit) & mean & std & min & 25\% & 50\% & 75\% & max \\
+\midrule
+AC Power (kW) & 307.80 & 394.40 & 0.00 & 0.00 & 41.49 & 623.62 & 1\,410.95 \\
+DC Power (kW) & 3\,147.43 & 4\,036.46 & 0.00 & 0.00 & 429.00 & 6\,366.96 & 14\,471.13 \\
+Total Yield (MWh) & 6.98 & 4.16 & 6.18 & 6.51 & 7.15 & 7.27 & 7.85 \\
+Daily Yield (kWh) & 3\,295.97 & 3\,145.18 & 0.00 & 0.00 & 2\,658.71 & 6\,274.00 & 9\,163.00 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[!htbp]
+\centering
+\caption{Weather data grouped statistics and quantiles}
+\begin{tabular}{lccccccc}
+\toprule
+Metric (unit) & mean & std & min & 25\% & 50\% & 75\% & max \\
+\midrule
+Irradiation (kW/m$^2$) & 0.228 & 0.301 & 0.000 & 0.000 & 0.025 & 0.450 & 1.222 \\
+Ambient Temperature ($^{\circ}$C) & 25.53 & 3.35 & 20.40 & 22.71 & 24.61 & 27.92 & 35.25 \\
+Module Temperature ($^{\circ}$C) & 31.09 & 12.26 & 18.14 & 21.09 & 24.62 & 41.31 & 65.55 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Original data visual quality analysis}
+Following visual issues were detected in the raw data:
+
+\begin{figure}[!htbp]
+    \centering
+    \includegraphics[width=0.72\linewidth]{fac10.png}
+    \caption{DC Power is about 10$\times$ higher than AC Power in the raw data, indicating a scaling error.}
+\end{figure}
+
+\begin{figure}[!htbp]
+    \centering
+    \includegraphics[width=0.72\linewidth]{total_yield_old.png}
+    \caption{Total Yield over time mainly reflects different offsets per source key (not starting at 0), so it is not comparable across inverters and was excluded from later merged analysis.}
+\end{figure}
+
+\subsection{Data Preprocessing}
+\begin{itemize}[leftmargin=*]
+    \item Converted date time columns to a consistent datetime format and verified the expected 15-minute sampling over the full range (15 May--17 Jun 2020).
+    \item Rescaled DC Power by a factor of 0.1 to match the magnitude of the co-recorded AC Power.
+    \item Dropped Plant ID because it is constant and adds no information.
+    \item Removed two extreme irradiation spikes and filled 44 missing irradiation values with interpolation; final merged table has no missing values (68,778 rows, 9 columns).
+\end{itemize}
+
+\subsection{Preprocessed vs original data visual analysis}
+Two quick before/after plots summarize the most visible preprocessing effects.
+
+\begin{figure}[!htbp]
+    \centering
+    \begin{subfigure}[t]{0.49\linewidth}
+        \centering
+        \includegraphics[width=\linewidth]{fac10_fix.png}
+        \caption{After rescaling, AC Power and DC Power align in magnitude over time.}
+        \label{fig:fac10_fix}
+    \end{subfigure}\hfill
+    \begin{subfigure}[t]{0.49\linewidth}
+        \centering
+        \includegraphics[width=\linewidth]{ir_outlier.png}
+        \caption{Irradiation outliers removed and gaps interpolated.}
+        \label{fig:ir_outlier}
+    \end{subfigure}
+    \caption{Preprocessed vs.\ original comparison for power and irradiation.}
+\end{figure}
+
+\section{Visualization and Exploratory Analysis}
+
+\subsection{Time-series visualizations}
+Figures~\ref{fig:fac10_fix} and~\ref{fig:ir_outlier} show time series visualizations.
+
+\subsection{Distribution analysis}
+Irradiation distributions summarize typical operating conditions; zero values (nighttime) were excluded in one plot because they dominate the histogram.
+
+\begin{figure}[!htbp]
+    \centering
+    \begin{minipage}[t]{0.49\linewidth}
+        \centering
+        \includegraphics[width=\linewidth]{ir_dis_with_zero.png}
+        \small (a) Including zero values
+    \end{minipage}\hfill
+    \begin{minipage}[t]{0.49\linewidth}
+        \centering
+        \includegraphics[width=\linewidth]{ir_dis_without_zero.png}
+        \small (b) Excluding zero values
+    \end{minipage}
+    \caption{Irradiation distribution.}\label{fig:ir_dist_compare}
+\end{figure}
+
+\subsection{Correlation analysis}
+The correlation matrix shows the strongest relationships between weather and power. A notable case is Daily Yield versus AC/DC Power: Pearson stays low due to the day/night plateau, while Spearman is higher because sunny hours consistently rank above nighttime values.
+
+\begin{figure}[!htbp]
+    \centering
+    \includegraphics[width=0.85\linewidth]{correlation.png}
+    \caption{Correlation heatmap (Pearson and rank-based correlation) for key variables.}\label{fig:correlation}
+\end{figure}
+
+\subsection{Daily / periodic pattern analysis}
+Daily patterns show a clear midday production window: irradiation and power rise after sunrise, peak around 12:00--15:00, and drop back to near zero in the evening.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.85\linewidth]{daily_pattern.png}
+    \caption{Daily pattern of irradiation and power across the day.}
+    \label{fig:daily_pattern}
+\end{figure}
+
+\noindent\textbf{Pattern checks (True/False):}
+\begin{itemize}[leftmargin=*]
+    \item Irradiation peaks around 12:00--15:00 each day --- \textbf{True}.
+    \item AC Power and DC Power peak together with irradiation --- \textbf{True}.
+    \item Ambient Temperature starts rising around 05:00--06:00 --- \textbf{True}.
+    \item Daily Yield end of the day variability is on the order of $\sigma \approx 2000\,$kWh --- \textbf{True}.
+\end{itemize}
+
+\section{Probability and Event Analysis}
+
+\subsection{Threshold-based event probability}
+To mark ``highly productive'' conditions, I used percentile thresholds (90th percentile for AC Power and 80th percentile for Irradiation).
+Empirical frequencies:
+\begin{itemize}[leftmargin=*]
+    \item $P(\text{AC Power} > 873\,\text{kW}) = 10.02\%$.
+    \item $P(\text{Irradiation} > 0.5364\,\text{kW/m}^2) = 20.00\%$.
+\end{itemize}
+
+\subsection{Cross tabulation analysis}
+Irradiation and Module Temperature bins co-vary strongly: zero irradiation occurs almost entirely at cooler module temperatures, while high/very high irradiation concentrates in the 40--50\,$^{\circ}$C and $>50\,^{\circ}$C bins.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.85\linewidth]{crosstab.png}
+    \caption{Cross tabulation of Irradiation bins versus Module Temperature bins (counts).}\label{fig:crosstab}
+\end{figure}
+
+\subsection{Conditional probability analysis}
+Conditional probabilities were computed for a high-power event (AC Power above its 90th-percentile threshold), grouped by irradiation bands and temperature bands. Medium to very high irradiation corresponds to a high likelihood of reaching the 90\% power level.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.95\linewidth]{conditional.png}
+    \caption{Conditional probabilities for high AC Power across irradiation and temperature bands.}\label{fig:conditional}
+\end{figure}
+
+\subsection{Observations and limitations}
+
+\noindent\textbf{Observations:}
+\begin{itemize}[leftmargin=*]
+    \item 873\,kW (90th percentile) is close to the practical upper output. The high irradiation bands make AC Power $>873\,$kW very likely.
+    \item Ambient Temperature around 25--35\,$^{\circ}$C tends to coincide with high success probability.
+    \item Elevated module temperatures mainly appear in the highest irradiation bins.
+\end{itemize}
+
+\par\noindent\textbf{Limitations / bias:}
+\begin{itemize}[leftmargin=*]
+    \item One weather sensor is assumed to represent all inverters.
+    \item Interpolated irradiation and temperatures can smooth sharp peaks.
+    \item Equal weighting of night and day timestamps pulls down unconditional probabilities.
+    \item Percentile thresholds (e.g., 90\% / 80\%) are dataset-specific and may not transfer to other sites or seasons.
+\end{itemize}
+
+
+\section{Statistical Theory Applications}
+
+\subsection{Law of Large Numbers (LLN)}
+\begin{figure}[!htbp]
+    \centering
+    \includegraphics[width=0.9\linewidth]{lln.png}
+    \caption{Law of Large Numbers.}\label{fig:lln}
+\end{figure}
+
+\subsection{Central Limit Theorem (CLT)}
+\begin{figure}[!htbp]
+    \centering
+    \begin{minipage}[t]{0.49\linewidth}
+        \centering
+        \includegraphics[width=\linewidth]{clt1.png}
+    \end{minipage}\hfill
+    \begin{minipage}[t]{0.49\linewidth}
+        \centering
+        \includegraphics[width=\linewidth]{clt2.png}
+    \end{minipage}
+    \caption{Central Limit Theorem.}\label{fig:clt}
+\end{figure}
+
+\subsection{Sanity checks and interpretation}
+\noindent\textbf{Law of Large Numbers:} The estimate starts noisy ($0$--$0.2$), settles near $10\%$ after about 800 observations, and stays stable after about 3000 (Figure~\ref{fig:lln}).
+
+\noindent\textbf{Central Limit Theorem:} The sampling distribution of the mean tightens as $n$ increases (Figure~\ref{fig:clt}; left: $n=24$, right: $n=384$).
+
+\section{Regression and Predictive Modeling}
+
+\subsection{Model definition, fitting, and validation}
+\textbf{Prediction target:} AC power.
+
+\textbf{Features:} Irradiation and Hour (captures the daily sunrise/sunset cycle).
+
+\textbf{Candidates:}
+\begin{itemize}[leftmargin=*]
+    \item Linear regression (baseline).
+    \item Polynomial regression (degrees 2 and 3) to allow curvature and interactions.
+\end{itemize}
+
+\begin{table}[!htbp]
+\centering
+\caption{Validation performance for candidate models}
+\begin{tabular}{lcc}
+\toprule
+Model & $R^2_{\mathrm{valid}}$ & RMSE$_{\mathrm{valid}}$ \\
+\midrule
+Linear & 0.880660 & 113.415684 \\
+Poly (deg=2) & 0.881550 & 112.991676 \\
+Poly (deg=3) & 0.865626 & 120.347468 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Poly (deg=2) was selected as a simple best performer.
+
+Residual summary: mean $-5.8$, std $112.8$.
+
+\begin{figure}[!htbp]
+    \centering
+    \includegraphics[width=0.95\linewidth]{residual.png}
+    \caption{Residual diagnostics for Poly (deg=2): residuals vs. prediction (left) and residuals over time (right).}\label{fig:residuals}
+\end{figure}
+
+\noindent Residual-vs-prediction stays centered near zero with a few extreme points; the time plot shows one period with strong overestimation, likely due to unmodeled cloudy conditions.
+
+\newpage
+\section{Dimensionality Reduction and Statistical Tests}
+
+\subsection{PCA, t-SNE, and UMAP}
+\begin{figure}[H]
+    \centering
+    \begin{subfigure}[t]{0.32\linewidth}
+        \centering
+        \includegraphics[width=\linewidth]{pca.png}
+        \caption{PCA}
+        \label{fig:pca}
+    \end{subfigure}\hfill
+    \begin{subfigure}[t]{0.32\linewidth}
+        \centering
+        \includegraphics[width=\linewidth]{tsne.png}
+        \caption{t-SNE}
+        \label{fig:tsne}
+    \end{subfigure}\hfill
+    \begin{subfigure}[t]{0.32\linewidth}
+        \centering
+        \includegraphics[width=\linewidth]{umap.png}
+        \caption{UMAP}
+        \label{fig:umap}
+    \end{subfigure}
+    \caption{PCA, t-SNE, and UMAP embeddings of six standardized features, highlighting the day--night structure in the solar plant data.}
+\end{figure}
+
+\noindent\textbf{PCA (variance and meaning):} The first two principal components capture over 95\% of the variation, which is expected because all six features are driven by the daily solar cycle. PC1 mainly represents overall solar intensity (power, irradiation, and temperature rising together). PC2 separates daily energy yield (positive) from ambient temperature (negative), which loosely tracks earlier vs. later hours based on accumulated production.
+
+\noindent\textbf{PCA (shape):} In the 2D plot, points form a smooth curve that follows the sun's daily arc rather than distinct clusters: night sits near zero, then the data flows continuously through morning, noon, and evening.
+
+\noindent\textbf{t-SNE:} t-SNE separates sparse night/zero-production readings from the daytime cloud. One compact lobe contains the near-zero points, while a second lobe covers timestamps with real output, with a thin gap where inputs were dropped.
+
+\noindent\textbf{UMAP:} UMAP shows the same two regimes as t-SNE but spread over a wider span. It forms a quiet island for night/zero readings and a smoother continuous arc for daytime generation, with the mid-gap again aligning with missing samples.
+
+\section{Key Findings}
+\begin{itemize}[leftmargin=*]
+    \item After cleaning, the merged data is consistent (Figures~\ref{fig:fac10_fix}--\ref{fig:ir_outlier}).
+    \item Day/night solar cycle dominates trends and correlations (Figures~\ref{fig:daily_pattern}--\ref{fig:correlation}).
+    \item High AC power is uncommon overall ($\approx 10\%$) but likely under high irradiation (Figures~\ref{fig:crosstab}--\ref{fig:conditional}).
+    \item Polynomial (deg=2) predicts AC power well ($R^2_{\mathrm{valid}}\approx 0.88$) with some cloudy-period errors (Figure~\ref{fig:residuals}).
+\end{itemize}
+
+\section{Summary and Conclusions}
+\begin{itemize}[leftmargin=*]
+    \item \textbf{Conclusion:} Irradiation + time-of-day explain most variability.
+    \item \textbf{Limits/next:} One weather sensor + interpolation; add lag/rolling features and time-aware validation if extending.
+\end{itemize}
+
+\end{document}
+
